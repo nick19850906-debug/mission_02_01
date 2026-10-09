@@ -9,6 +9,7 @@ python -m budget_app <command> [options]
 
 ## 저장 파일 위치 및 형식
 - 기본 저장 폴더: `./data/` (`--data-dir` 옵션으로 변경 가능)
+- 디렉토리 및 파일 생성 정책: 폴더나 파일이 없으면 실행 시 자동 생성되며, 파일 저장 시 원자성 보장을 위해 임시 파일(tempfile)을 거쳐 덮어씁니다.
 - `transactions.jsonl`: 거래 내역 (JSONL 포맷)
 - `categories.jsonl`: 카테고리
 - `budgets.jsonl`: 월별 예산

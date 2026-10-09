@@ -69,6 +69,7 @@ def main():
     # import
     imp_p = subparsers.add_parser("import", help="CSV 가져오기")
     imp_p.add_argument("--from", dest="in_file", required=True)
+    imp_p.add_argument("--policy", choices=["partial", "rollback"], default="partial", help="오류 시 처리 정책 (기본: partial)")
 
     args = parser.parse_args()
     if not args.command:
@@ -106,7 +107,7 @@ def main():
     elif args.command == "export":
         service.export_csv(args.out, args.month, args.from_date, args.to_date)
     elif args.command == "import":
-        service.import_csv(args.in_file)
+        service.import_csv(args.in_file, policy=args.policy)
 
 if __name__ == "__main__":
     main()

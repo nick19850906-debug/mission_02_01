@@ -6,7 +6,7 @@ from collections import defaultdict
 from typing import List, Optional
 from .repository import Repository
 from .models import Transaction, Category
-from .utils import BudgetAppError, handle_errors
+from .utils import BudgetAppError, handle_errors, with_logging
 
 class BudgetService:
     """비즈니스 로직과 데이터 검증을 담당하는 계층 (서비스)"""
@@ -58,22 +58,20 @@ class BudgetService:
         self.repo.save_transaction(tx)
         print(f"[저장 완료] id={tx.id}")
 
+    @with_logging
     @handle_errors
-    def list_transactions(self, limit: int = None):
-        txs = list(self.repo.get_transactions())
-        txs.sort(key=lambda x: x.date, reverse=True)
-        if limit:
-            txs = txs[:limit]
-            
-        for t in txs:
+    def list_transactions(self, limit: int = None) -> None:
+        count = 0
+        for t in self.repo.get_transactions():
             print(f"{t.id} | {t.date} | {t.type} | {t.category} | {t.amount} | {t.memo}")
+            count += 1
+            if limit and count >= limit:
+                break
 
+    @with_logging
     @handle_errors
-    def search_transactions(self, from_date, to_date, category, t_type, q, tag):
-        txs = list(self.repo.get_transactions())
-        txs.sort(key=lambda x: x.date, reverse=True)
-        
-        for t in txs:
+    def search_transactions(self, from_date, to_date, category, t_type, q, tag) -> None:
+        for t in self.repo.get_transactions():
             if from_date and t.date < from_date: continue
             if to_date and t.date > to_date: continue
             if category and t.category != category: continue
@@ -220,27 +218,51 @@ class BudgetService:
                 
         print(f"[완료] {out_path} ({count} records)")
 
+    @with_logging
     @handle_errors
-    def import_csv(self, in_path: str):
+    def import_csv(self, in_path: str, policy: str = "partial") -> None:
         if not os.path.exists(in_path):
             raise BudgetAppError(f"'{in_path}' 파일이 존재하지 않습니다.")
             
         imported = 0
         skipped = 0
+        errors = []
+        new_txs = []
+        
         with open(in_path, 'r', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+            reader = csv.reader(f)
+            headers = next(reader, None)
+            if headers != ["date", "type", "category", "amount", "memo", "tags"]:
+                raise BudgetAppError("CSV 헤더가 유효하지 않거나 누락되었습니다.", hint="올바른 헤더: date,type,category,amount,memo,tags")
+            
+            f.seek(0)
+            dict_reader = csv.DictReader(f)
+            for line_no, row in enumerate(dict_reader, start=2):
                 try:
-                    self._validate_date(row["date"])
-                    self._validate_type(row["type"])
-                    self._validate_amount(int(row["amount"]))
-                    self._validate_category(row["category"])
+                    self._validate_date(row.get("date", ""))
+                    self._validate_type(row.get("type", ""))
+                    amt_str = row.get("amount", "")
+                    if not amt_str.isdigit():
+                        raise ValueError("금액은 양의 정수여야 합니다.")
+                    self._validate_amount(int(amt_str))
+                    self._validate_category(row.get("category", ""))
                     
                     tx_id = f"TX-{uuid.uuid4().hex[:6].upper()}"
-                    tx = Transaction(tx_id, row["type"], row["date"], int(row["amount"]), row["category"], row.get("memo", ""), row.get("tags", ""))
-                    self.repo.save_transaction(tx)
+                    tx = Transaction(tx_id, row["type"], row["date"], int(amt_str), row["category"], row.get("memo", ""), row.get("tags", ""))
+                    new_txs.append(tx)
                     imported += 1
-                except Exception:
+                except Exception as e:
                     skipped += 1
+                    errors.append(f"행 {line_no}: {str(e)}")
+                    if policy == "rollback":
+                        raise BudgetAppError(f"가져오기 실패 (롤백됨). 행 {line_no}에 오류: {e}")
+                        
+        if policy == "partial" or (policy == "rollback" and skipped == 0):
+            for tx in new_txs:
+                self.repo.save_transaction(tx)
                     
         print(f"[완료] imported={imported}, skipped={skipped}")
+        if skipped > 0 and policy == "partial":
+            print("[실패 상세 리포트]")
+            for err in errors:
+                print(f"- {err}")
